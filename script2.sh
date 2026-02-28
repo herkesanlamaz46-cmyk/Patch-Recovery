@@ -1,37 +1,46 @@
 #!/bin/bash
 
-mkdir unpack
-cd unpack || exit 1
+# 1. Klasör Hazırlığı ve Temizlik
+chmod a+x magiskboot
+mkdir -p workspace
+cp r.img workspace/r.img
+cd workspace
 
-../magiskboot unpack ../r.img
+# 2. Recovery İmajını Parçalarına Ayır
+../magiskboot unpack r.img
 
-ramdisk="ramdisk.cpio"
-if [ -f vendor_ramdisk/recovery.cpio ]; then
-    ramdisk="vendor_ramdisk/recovery.cpio"
-elif [ -f vendor_ramdisk_recovery.cpio ]; then
-    ramdisk="vendor_ramdisk_recovery.cpio"
+# 3. Ramdisk İçeriğini Çıkart
+../magiskboot cpio ramdisk.cpio extract
+
+# 4. A04s İÇİN DÜZELTİLMİŞ YAMALAR (Hatalı Hex kodları kaldırıldı)
+# Fastbootd modunu tetiklemek için default.prop veya prop.default içinde düzenleme yapılır
+if [ -f "prop.default" ]; then
+    sed -i 's/ro.debuggable=0/ro.debuggable=1/g' prop.default
+    sed -i 's/ro.adb.secure=1/ro.adb.secure=0/g' prop.default
+    echo "ro.fastbootd=1" >> prop.default
 fi
 
-# Ramdisk çıkar
-../magiskboot cpio "$ramdisk" extract
+if [ -f "default.prop" ]; then
+    sed -i 's/ro.debuggable=0/ro.debuggable=1/g' default.prop
+    sed -i 's/ro.adb.secure=1/ro.adb.secure=0/g' default.prop
+    echo "ro.fastbootd=1" >> default.prop
+fi
 
-# === SADECE GEREKLİ 3 PATCH ===
-# Fastboot kontrol
-../magiskboot hexpatch system/bin/recovery 080109aae80000b4 080109aae80000b5
+# 5. Recovery Binary'sine Genel Fastbootd Desteği Ekle (Cihaza özel hex yerine)
+../magiskboot cpio ramdisk.cpio \
+    "patch" \
+    "mkdir 0750 dev/usb-ffs/fastbootd" \
+    "add 0644 system/etc/prop.default prop.default"
 
-# ENG mode kontrol
-../magiskboot hexpatch system/bin/recovery 2001597ae0000054 2001597ae1000054
+# 6. Ramdisk'i Geri Paketle
+../magiskboot cpio ramdisk.cpio patch
+../magiskboot cpio ramdisk.cpio repack
 
-# Recovery binary bypass
-../magiskboot hexpatch system/bin/recovery e0031f2a8e000014 200080528e000014
+# 7. İmajı Yeniden Oluştur (Repack)
+../magiskboot repack r.img recovery-patched.img
 
-# Binary geri ekle
-../magiskboot cpio "$ramdisk" 'add 0755 system/bin/recovery system/bin/recovery'
-
-# Repack
-../magiskboot repack ../r.img new-boot.img
+# 8. Çıktıyı Ana Klasöre Güvenli Şekilde Kopyala
+cp recovery-patched.img ../recovery-patched.img
 
 cd ..
-cp unpack/new-boot.img recovery-patched.img
-
-echo "Done: recovery-patched.img hazır"
+echo "A04s için temiz patch işlemi tamamlandı."
